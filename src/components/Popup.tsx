@@ -11,9 +11,18 @@ import { Label } from "@/components/ui/label";
 import { Input } from "@/components/ui/input";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "./ui/button";
-import { Log } from "./logs/log";
-import { Slider } from "./ui/slider";
 import { logEvent } from "@/lib/logger";
+
+interface WorkShift {
+  startTime: string;
+  endTime: string;
+}
+
+interface UserSettings {
+  weight: number;
+  cupVolume: number;
+  workShifts: WorkShift[];
+}
 
 interface LoadingCircleProps {
   size?: number;
@@ -40,27 +49,64 @@ const LoadingCircle: React.FC<LoadingCircleProps> = ({ size = 4 }) => {
   );
 };
 
+// Công thức tính lượng nước cần uống mỗi ngày (ml)
+const calculateDailyWaterIntake = (weight: number): number => {
+  // Công thức: 35ml/kg cân nặng
+  return Math.round(weight * 35);
+};
+
+// Tính tổng thời gian làm việc (phút)
+const calculateTotalWorkMinutes = (shifts: WorkShift[]): number => {
+  return shifts.reduce((total, shift) => {
+    const [startHour, startMinute] = shift.startTime.split(":").map(Number);
+    const [endHour, endMinute] = shift.endTime.split(":").map(Number);
+
+    const startMinutes = startHour * 60 + startMinute;
+    const endMinutes = endHour * 60 + endMinute;
+
+    return total + (endMinutes - startMinutes);
+  }, 0);
+};
+
+// Tính số lần nhắc nhở và khoảng thời gian giữa các lần
+const calculateReminderSchedule = (
+  dailyWaterIntake: number,
+  cupVolume: number,
+  totalWorkMinutes: number
+): { reminderCount: number; intervalMinutes: number } => {
+  const reminderCount = Math.ceil(dailyWaterIntake / cupVolume);
+  const intervalMinutes = Math.floor(totalWorkMinutes / reminderCount);
+
+  return { reminderCount, intervalMinutes };
+};
+
 export const Popup = () => {
-  const [logs, setLogs] = useState([]);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState(null);
   const [statusMessage, setStatusMessage] = useState("");
   const [isActive, setIsActive] = useState(false);
-  const [reminderInterval, setReminderInterval] = useState(30);
-  const [startTime, setStartTime] = useState("09:00");
-  const [endTime, setEndTime] = useState("18:00");
+  const [userSettings, setUserSettings] = useState<UserSettings>({
+    weight: 70,
+    cupVolume: 250,
+    workShifts: [{ startTime: "09:00", endTime: "18:00" }],
+  });
   const [nextReminderTime, setNextReminderTime] = useState<Date | null>(null);
   const [reminderCount, setReminderCount] = useState(0);
+  const [calculatedSchedule, setCalculatedSchedule] = useState<{
+    dailyWaterIntake: number;
+    reminderCount: number;
+    intervalMinutes: number;
+  } | null>(null);
 
   useEffect(() => {
     // Load settings from storage when component mounts
     chrome.storage.local.get(
-      ["isEnabled", "reminderInterval", "startTime", "endTime", "nextReminderTime", "reminderCount"],
+      ["isEnabled", "userSettings", "nextReminderTime", "reminderCount"],
       (result) => {
         setIsActive(result.isEnabled || false);
-        setReminderInterval(result.reminderInterval || 30);
-        setStartTime(result.startTime || "09:00");
-        setEndTime(result.endTime || "18:00");
+        if (result.userSettings) {
+          setUserSettings(result.userSettings);
+        }
         if (result.nextReminderTime) {
           setNextReminderTime(new Date(result.nextReminderTime));
         }
@@ -70,6 +116,23 @@ export const Popup = () => {
     );
   }, []);
 
+  // Tính toán lịch nhắc nhở khi thông tin người dùng thay đổi
+  useEffect(() => {
+    const dailyWaterIntake = calculateDailyWaterIntake(userSettings.weight);
+    const totalWorkMinutes = calculateTotalWorkMinutes(userSettings.workShifts);
+    const { reminderCount, intervalMinutes } = calculateReminderSchedule(
+      dailyWaterIntake,
+      userSettings.cupVolume,
+      totalWorkMinutes
+    );
+
+    setCalculatedSchedule({
+      dailyWaterIntake,
+      reminderCount,
+      intervalMinutes,
+    });
+  }, [userSettings]);
+
   // Update countdown timer
   useEffect(() => {
     if (!isActive || !nextReminderTime) return;
@@ -77,17 +140,20 @@ export const Popup = () => {
     const timer = setInterval(() => {
       const now = new Date();
       const timeLeft = nextReminderTime.getTime() - now.getTime();
-      
+
       if (timeLeft <= 0) {
         // Request next reminder time from background
-        chrome.runtime.sendMessage({ action: "GET_NEXT_REMINDER" }, (response) => {
-          if (response.nextReminderTime) {
-            setNextReminderTime(new Date(response.nextReminderTime));
+        chrome.runtime.sendMessage(
+          { action: "GET_NEXT_REMINDER" },
+          (response) => {
+            if (response.nextReminderTime) {
+              setNextReminderTime(new Date(response.nextReminderTime));
+            }
+            if (response.reminderCount !== undefined) {
+              setReminderCount(response.reminderCount);
+            }
           }
-          if (response.reminderCount !== undefined) {
-            setReminderCount(response.reminderCount);
-          }
-        });
+        );
       }
     }, 1000);
 
@@ -103,9 +169,7 @@ export const Popup = () => {
       chrome.storage.local.set(
         {
           isEnabled: true,
-          reminderInterval,
-          startTime,
-          endTime,
+          userSettings,
         },
         () => resolve()
       );
@@ -116,9 +180,8 @@ export const Popup = () => {
       {
         action: "START_REMINDER",
         settings: {
-          interval: reminderInterval,
-          startTime,
-          endTime,
+          userSettings,
+          calculatedSchedule,
         },
       },
       (response) => {
@@ -174,6 +237,36 @@ export const Popup = () => {
         }
       }
     );
+  };
+
+  const addWorkShift = () => {
+    setUserSettings((prev) => ({
+      ...prev,
+      workShifts: [
+        ...prev.workShifts,
+        { startTime: "09:00", endTime: "18:00" },
+      ],
+    }));
+  };
+
+  const removeWorkShift = (index: number) => {
+    setUserSettings((prev) => ({
+      ...prev,
+      workShifts: prev.workShifts.filter((_, i) => i !== index),
+    }));
+  };
+
+  const updateWorkShift = (
+    index: number,
+    field: keyof WorkShift,
+    value: string
+  ) => {
+    setUserSettings((prev) => ({
+      ...prev,
+      workShifts: prev.workShifts.map((shift, i) =>
+        i === index ? { ...shift, [field]: value } : shift
+      ),
+    }));
   };
 
   return (
@@ -236,7 +329,8 @@ export const Popup = () => {
                                 {Math.max(
                                   0,
                                   Math.floor(
-                                    (nextReminderTime.getTime() - new Date().getTime()) /
+                                    (nextReminderTime.getTime() -
+                                      new Date().getTime()) /
                                       1000 /
                                       60
                                   )
@@ -250,49 +344,112 @@ export const Popup = () => {
 
                       <div className="space-y-2">
                         <Label className="text-sm font-medium">
-                          Reminder Interval (minutes)
+                          Your Weight (kg)
                         </Label>
-                        <div className="flex items-center space-x-2">
-                          <Slider
-                            value={[reminderInterval]}
-                            onValueChange={(value) =>
-                              setReminderInterval(value[0])
-                            }
-                            min={5}
-                            max={120}
-                            step={15}
-                            className="flex-1"
-                          />
-                          <span className="text-sm text-muted-foreground w-12">
-                            {reminderInterval}m
-                          </span>
-                        </div>
+                        <Input
+                          type="number"
+                          value={userSettings.weight}
+                          onChange={(e) =>
+                            setUserSettings((prev) => ({
+                              ...prev,
+                              weight: Number(e.target.value),
+                            }))
+                          }
+                          min={30}
+                          max={200}
+                          className="w-full"
+                        />
                       </div>
 
-                      <div className="grid grid-cols-2 gap-4">
-                        <div className="space-y-2">
-                          <Label className="text-sm font-medium">
-                            Start Time
-                          </Label>
-                          <Input
-                            type="time"
-                            value={startTime}
-                            onChange={(e) => setStartTime(e.target.value)}
-                            className="w-full"
-                          />
-                        </div>
-                        <div className="space-y-2">
-                          <Label className="text-sm font-medium">
-                            End Time
-                          </Label>
-                          <Input
-                            type="time"
-                            value={endTime}
-                            onChange={(e) => setEndTime(e.target.value)}
-                            className="w-full"
-                          />
-                        </div>
+                      <div className="space-y-2">
+                        <Label className="text-sm font-medium">
+                          Cup Volume (ml)
+                        </Label>
+                        <Input
+                          type="number"
+                          value={userSettings.cupVolume}
+                          onChange={(e) =>
+                            setUserSettings((prev) => ({
+                              ...prev,
+                              cupVolume: Number(e.target.value),
+                            }))
+                          }
+                          min={100}
+                          max={500}
+                          className="w-full"
+                        />
                       </div>
+
+                      <div className="space-y-2">
+                        <div className="flex justify-between items-center">
+                          <Label className="text-sm font-medium">
+                            Work Shifts
+                          </Label>
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            onClick={addWorkShift}
+                          >
+                            Add Shift
+                          </Button>
+                        </div>
+                        {userSettings.workShifts.map((shift, index) => (
+                          <div key={index} className="flex gap-2 items-center">
+                            <Input
+                              type="time"
+                              value={shift.startTime}
+                              onChange={(e) =>
+                                updateWorkShift(
+                                  index,
+                                  "startTime",
+                                  e.target.value
+                                )
+                              }
+                              className="flex-1"
+                            />
+                            <span>to</span>
+                            <Input
+                              type="time"
+                              value={shift.endTime}
+                              onChange={(e) =>
+                                updateWorkShift(
+                                  index,
+                                  "endTime",
+                                  e.target.value
+                                )
+                              }
+                              className="flex-1"
+                            />
+                            {userSettings.workShifts.length > 1 && (
+                              <Button
+                                variant="destructive"
+                                size="sm"
+                                onClick={() => removeWorkShift(index)}
+                              >
+                                Remove
+                              </Button>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+
+                      {calculatedSchedule && (
+                        <div className="space-y-2 p-4 bg-gray-50 rounded-lg text-black">
+                          <h3 className="font-medium">Calculated Schedule</h3>
+                          <p className="text-sm">
+                            Daily water intake:{" "}
+                            {calculatedSchedule.dailyWaterIntake}ml
+                          </p>
+                          <p className="text-sm">
+                            Reminders per day:{" "}
+                            {calculatedSchedule.reminderCount} times
+                          </p>
+                          <p className="text-sm">
+                            Interval between reminders:{" "}
+                            {calculatedSchedule.intervalMinutes} minutes
+                          </p>
+                        </div>
+                      )}
                     </div>
                   </>
                 )}
@@ -323,17 +480,6 @@ export const Popup = () => {
               >
                 {isActive ? "STOP REMINDER" : "START REMINDER"}
               </Button>
-
-              <div className="flex flex-col space-y-2 mt-2 w-full">
-                <Label className="block text-sm font-medium mb-2 m-auto">
-                  Activity Logs
-                </Label>
-                <div className="log-container w-full custom-scrollbar">
-                  {Array.isArray(logs) &&
-                    logs.length > 0 &&
-                    logs.map((log, index) => <Log key={index} log={log} />)}
-                </div>
-              </div>
             </>
           )}
         </CardFooter>

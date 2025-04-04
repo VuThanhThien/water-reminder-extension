@@ -1,14 +1,28 @@
 import { logEvent } from "./lib/logger";
 
-interface ReminderSettings {
-  interval: number;
+interface WorkShift {
   startTime: string;
   endTime: string;
 }
 
+interface UserSettings {
+  weight: number;
+  cupVolume: number;
+  workShifts: WorkShift[];
+}
+
+interface CalculatedSchedule {
+  dailyWaterIntake: number;
+  reminderCount: number;
+  intervalMinutes: number;
+}
+
 let reminderTimer: NodeJS.Timeout | null = null;
 let nextReminderTime: Date | null = null;
-let currentSettings: ReminderSettings | null = null;
+let currentSettings: {
+  userSettings: UserSettings;
+  calculatedSchedule: CalculatedSchedule;
+} | null = null;
 let reminderCount = 0;
 let lastResetDate: number | null = null;
 let lastReminderTime: Date | null = null;
@@ -25,36 +39,60 @@ function resetDailyCount() {
   }
 }
 
-function isWithinTimeRange(startTime: string, endTime: string): boolean {
+function isWithinWorkShifts(workShifts: WorkShift[]): boolean {
   const now = new Date();
   const currentTime = now.getHours() * 60 + now.getMinutes();
 
-  const [startHour, startMinute] = startTime.split(":").map(Number);
-  const [endHour, endMinute] = endTime.split(":").map(Number);
-
-  const startMinutes = startHour * 60 + startMinute;
-  const endMinutes = endHour * 60 + endMinute;
-
-  return currentTime >= startMinutes && currentTime <= endMinutes;
+  return workShifts.some(shift => {
+    const [startHour, startMinute] = shift.startTime.split(":").map(Number);
+    const [endHour, endMinute] = shift.endTime.split(":").map(Number);
+    
+    const startMinutes = startHour * 60 + startMinute;
+    const endMinutes = endHour * 60 + endMinute;
+    
+    return currentTime >= startMinutes && currentTime <= endMinutes;
+  });
 }
 
-function calculateNextReminderTime(settings: ReminderSettings): Date {
+function calculateNextReminderTime(settings: {
+  userSettings: UserSettings;
+  calculatedSchedule: CalculatedSchedule;
+}): Date {
   const now = new Date();
-  const [startHour, startMinute] = settings.startTime.split(":").map(Number);
-  const [endHour, endMinute] = settings.endTime.split(":").map(Number);
-
-  const endMinutes = endHour * 60 + endMinute;
-
-  let nextTime = new Date(now);
-  nextTime.setMinutes(nextTime.getMinutes() + settings.interval);
-
-  // If next time is outside working hours, set it to next day's start time
-  if (nextTime.getHours() * 60 + nextTime.getMinutes() > endMinutes) {
-    nextTime = new Date(now);
-    nextTime.setDate(nextTime.getDate() + 1);
-    nextTime.setHours(startHour, startMinute, 0, 0);
+  const { intervalMinutes } = settings.calculatedSchedule;
+  
+  // Nếu chưa có thời điểm nhắc nhở trước đó, tính từ thời điểm hiện tại
+  if (!lastReminderTime) {
+    return new Date(now.getTime() + intervalMinutes * 60 * 1000);
   }
-
+  
+  // Tính thời điểm nhắc nhở tiếp theo
+  let nextTime = new Date(lastReminderTime.getTime() + intervalMinutes * 60 * 1000);
+  
+  // Kiểm tra xem thời điểm tiếp theo có nằm trong ca làm việc không
+  if (!isWithinWorkShifts(settings.userSettings.workShifts)) {
+    // Tìm ca làm việc tiếp theo
+    const nextShift = settings.userSettings.workShifts.find(shift => {
+      const [startHour, startMinute] = shift.startTime.split(":").map(Number);
+      const shiftStart = new Date(now);
+      shiftStart.setHours(startHour, startMinute, 0, 0);
+      return shiftStart > now;
+    });
+    
+    if (nextShift) {
+      const [startHour, startMinute] = nextShift.startTime.split(":").map(Number);
+      nextTime = new Date(now);
+      nextTime.setHours(startHour, startMinute, 0, 0);
+    } else {
+      // Nếu không có ca làm việc tiếp theo, chuyển sang ngày hôm sau
+      const firstShift = settings.userSettings.workShifts[0];
+      const [startHour, startMinute] = firstShift.startTime.split(":").map(Number);
+      nextTime = new Date(now);
+      nextTime.setDate(nextTime.getDate() + 1);
+      nextTime.setHours(startHour, startMinute, 0, 0);
+    }
+  }
+  
   return nextTime;
 }
 
@@ -115,7 +153,7 @@ function checkAndShowNotification() {
   
   // Kiểm tra xem đã đến thời điểm nhắc nhở chưa
   if (nextReminderTime && now >= nextReminderTime) {
-    if (isWithinTimeRange(currentSettings.startTime, currentSettings.endTime)) {
+    if (isWithinWorkShifts(currentSettings.userSettings.workShifts)) {
       showNotification();
       reminderCount++;
       chrome.storage.local.set({ reminderCount });
@@ -134,7 +172,10 @@ function checkAndShowNotification() {
   }
 }
 
-function startReminder(settings: ReminderSettings) {
+function startReminder(settings: {
+  userSettings: UserSettings;
+  calculatedSchedule: CalculatedSchedule;
+}) {
   if (reminderTimer) {
     clearInterval(reminderTimer);
   }
@@ -171,9 +212,6 @@ function startReminder(settings: ReminderSettings) {
     // Reset count for new day if needed
     resetDailyCount();
     
-    // Convert interval from minutes to milliseconds
-    const intervalMs = settings.interval * 60 * 1000;
-    
     // Kiểm tra ngay lập tức nếu đã đến thời điểm nhắc nhở
     checkAndShowNotification();
     
@@ -183,7 +221,7 @@ function startReminder(settings: ReminderSettings) {
     logEvent(
       "info",
       "startReminder",
-      `Water reminder started with ${settings.interval} minute interval`
+      `Water reminder started with ${settings.calculatedSchedule.intervalMinutes} minute interval`
     );
   });
 }
@@ -212,9 +250,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     // Save settings to storage
     chrome.storage.local.set({
       isEnabled: true,
-      reminderInterval: message.settings.interval,
-      startTime: message.settings.startTime,
-      endTime: message.settings.endTime,
+      userSettings: message.settings.userSettings,
+      calculatedSchedule: message.settings.calculatedSchedule,
       startTimestamp: Date.now(),
     });
     sendResponse({
@@ -239,9 +276,8 @@ chrome.runtime.onInstalled.addListener(() => {
   chrome.storage.local.get(
     [
       "isEnabled",
-      "reminderInterval",
-      "startTime",
-      "endTime",
+      "userSettings",
+      "calculatedSchedule",
       "reminderCount",
       "lastResetDate",
       "lastReminderTime",
@@ -263,11 +299,10 @@ chrome.runtime.onInstalled.addListener(() => {
       
       resetDailyCount();
 
-      if (result.isEnabled) {
+      if (result.isEnabled && result.userSettings && result.calculatedSchedule) {
         startReminder({
-          interval: result.reminderInterval || 30,
-          startTime: result.startTime || "09:00",
-          endTime: result.endTime || "18:00",
+          userSettings: result.userSettings,
+          calculatedSchedule: result.calculatedSchedule,
         });
       }
     }
@@ -278,9 +313,8 @@ chrome.runtime.onInstalled.addListener(() => {
 chrome.storage.local.get(
   [
     "isEnabled",
-    "reminderInterval",
-    "startTime",
-    "endTime",
+    "userSettings",
+    "calculatedSchedule",
     "reminderCount",
     "lastResetDate",
     "lastReminderTime",
@@ -302,11 +336,10 @@ chrome.storage.local.get(
     
     resetDailyCount();
 
-    if (result.isEnabled) {
+    if (result.isEnabled && result.userSettings && result.calculatedSchedule) {
       startReminder({
-        interval: result.reminderInterval || 30,
-        startTime: result.startTime || "09:00",
-        endTime: result.endTime || "18:00",
+        userSettings: result.userSettings,
+        calculatedSchedule: result.calculatedSchedule,
       });
     }
   }

@@ -107,11 +107,19 @@
 }
 
 .log-container {
-	background-color: 0 0% 98%;
-	margin-bottom: 10px;
-	overflow-y: auto;
-	max-height: 250px;
+  background-color: 0 0% 98%;
+  margin-bottom: 10px;
+  overflow-y: auto;
+  max-height: 250px;
   width: 100%;
-	font-size: 0.9em;
+  font-size: 0.9em;
   color: #fff;
+}
+
+input[type="time"]::-webkit-calendar-picker-indicator {
+  background: none;
+  opacity: 0;
+  position: absolute;
+  width: 10%;
+  left: 35%;
 }
