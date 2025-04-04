@@ -1,0 +1,47 @@
+.column {
+	display: flex;
+	flex-direction: column;
+	justify-content: flex-start;
+	align-items: start;
+}
+
+.log-header {
+	display: flex;
+	flex-direction: row;
+	align-items: center;
+	justify-content: space-between;
+	border-bottom: 1px solid #3a3a3a;
+	font-size: 12px;
+	font-weight: 600;
+	margin-bottom: 8px;
+}
+
+.log {
+	padding: 5px;
+	margin-bottom: 2px;
+	border-bottom: 1px solid #333333;
+}
+
+.log:last-child {
+	border-bottom: none;
+}
+
+.log-body {
+	display: flex;
+	flex-grow: 1;
+}
+
+.log.info {
+	background-color: #2b2b2b;
+	color: #6ab0ff;
+}
+
+.log.error {
+	background-color: #2b2b2b;
+	color: #ff6584;
+}
+
+.log.warning {
+	background-color: #2b2b2b;
+	color: #ffb366;
+}

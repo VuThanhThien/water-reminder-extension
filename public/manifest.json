@@ -1,0 +1,46 @@
+{
+	"name": "Water reminder",
+	"manifest_version": 3,
+	"version": "1.0.9",
+	"description": "A simple water reminder extension to help you stay hydrated throughout the day.",
+	"permissions": [
+		"tabs",
+		"scripting",
+		"activeTab",
+		"alarms",
+		"storage",
+		"notifications",
+		"offscreen"
+	],
+	"host_permissions": [
+		"<all_urls>"
+	],
+	"icons": {
+		"16": "icon.png",
+		"48": "icon.png",
+		"128": "icon.png"
+	},
+	"action": {
+		"default_popup": "index.html",
+		"default_icon": {
+			"16": "icon.png",
+			"48": "icon.png",
+			"128": "icon.png"
+		}
+	},
+	"background": {
+		"service_worker": "background.js",
+		"type": "module"
+	},
+	"web_accessible_resources": [
+		{
+			"resources": [
+				"notification.mp3",
+				"notification.js"
+			],
+			"matches": [
+				"<all_urls>"
+			]
+		}
+	]
+}
