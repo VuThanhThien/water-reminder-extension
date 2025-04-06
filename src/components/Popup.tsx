@@ -239,6 +239,26 @@ export const Popup = () => {
     );
   };
 
+  const handleTest = () => {
+    chrome.runtime.sendMessage(
+      {
+        action: "test",
+      },
+      (response) => {
+        if (response.success) {
+          logEvent(
+            "info",
+            "stopReminder",
+            "Water reminder stopped successfully"
+          );
+        } else {
+          setStatusMessage("Failed to stop reminder. Please try again.");
+          logEvent("error", "stopReminder", "Failed to stop reminder");
+        }
+      }
+    );
+  };
+
   const addWorkShift = () => {
     setUserSettings((prev) => ({
       ...prev,

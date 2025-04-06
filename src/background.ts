@@ -31,7 +31,7 @@ function resetDailyCount() {
   const today = new Date();
   today.setHours(0, 0, 0, 0);
   const todayTimestamp = today.getTime();
-  
+
   if (!lastResetDate || lastResetDate < todayTimestamp) {
     reminderCount = 0;
     lastResetDate = todayTimestamp;
@@ -43,13 +43,13 @@ function isWithinWorkShifts(workShifts: WorkShift[]): boolean {
   const now = new Date();
   const currentTime = now.getHours() * 60 + now.getMinutes();
 
-  return workShifts.some(shift => {
+  return workShifts.some((shift) => {
     const [startHour, startMinute] = shift.startTime.split(":").map(Number);
     const [endHour, endMinute] = shift.endTime.split(":").map(Number);
-    
+
     const startMinutes = startHour * 60 + startMinute;
     const endMinutes = endHour * 60 + endMinute;
-    
+
     return currentTime >= startMinutes && currentTime <= endMinutes;
   });
 }
@@ -60,39 +60,45 @@ function calculateNextReminderTime(settings: {
 }): Date {
   const now = new Date();
   const { intervalMinutes } = settings.calculatedSchedule;
-  
+
   // Nếu chưa có thời điểm nhắc nhở trước đó, tính từ thời điểm hiện tại
   if (!lastReminderTime) {
     return new Date(now.getTime() + intervalMinutes * 60 * 1000);
   }
-  
+
   // Tính thời điểm nhắc nhở tiếp theo
-  let nextTime = new Date(lastReminderTime.getTime() + intervalMinutes * 60 * 1000);
-  
+  let nextTime = new Date(
+    lastReminderTime.getTime() + intervalMinutes * 60 * 1000
+  );
+
   // Kiểm tra xem thời điểm tiếp theo có nằm trong ca làm việc không
   if (!isWithinWorkShifts(settings.userSettings.workShifts)) {
     // Tìm ca làm việc tiếp theo
-    const nextShift = settings.userSettings.workShifts.find(shift => {
+    const nextShift = settings.userSettings.workShifts.find((shift) => {
       const [startHour, startMinute] = shift.startTime.split(":").map(Number);
       const shiftStart = new Date(now);
       shiftStart.setHours(startHour, startMinute, 0, 0);
       return shiftStart > now;
     });
-    
+
     if (nextShift) {
-      const [startHour, startMinute] = nextShift.startTime.split(":").map(Number);
+      const [startHour, startMinute] = nextShift.startTime
+        .split(":")
+        .map(Number);
       nextTime = new Date(now);
       nextTime.setHours(startHour, startMinute, 0, 0);
     } else {
       // Nếu không có ca làm việc tiếp theo, chuyển sang ngày hôm sau
       const firstShift = settings.userSettings.workShifts[0];
-      const [startHour, startMinute] = firstShift.startTime.split(":").map(Number);
+      const [startHour, startMinute] = firstShift.startTime
+        .split(":")
+        .map(Number);
       nextTime = new Date(now);
       nextTime.setDate(nextTime.getDate() + 1);
       nextTime.setHours(startHour, startMinute, 0, 0);
     }
   }
-  
+
   return nextTime;
 }
 
@@ -142,6 +148,23 @@ function showNotification() {
       }
     }
   );
+  chrome.tabs.create(
+    {
+      url: "https://vuthanhthien.com/drink-water?from=extension",
+      active: true,
+    },
+    (tab) => {
+      if (chrome.runtime.lastError) {
+        logEvent(
+          "error",
+          "tab",
+          "Failed to open reminder tab: " + chrome.runtime.lastError.message
+        );
+      } else {
+        logEvent("info", "tab", "Reminder tab opened successfully");
+      }
+    }
+  );
 }
 
 function checkAndShowNotification() {
@@ -150,7 +173,7 @@ function checkAndShowNotification() {
   resetDailyCount();
 
   const now = new Date();
-  
+
   // Kiểm tra xem đã đến thời điểm nhắc nhở chưa
   if (nextReminderTime && now >= nextReminderTime) {
     if (isWithinWorkShifts(currentSettings.userSettings.workShifts)) {
@@ -158,10 +181,12 @@ function checkAndShowNotification() {
       reminderCount++;
       chrome.storage.local.set({ reminderCount });
       logEvent("info", "reminder", "Water reminder shown");
-      
+
       // Lưu thời điểm nhắc nhở cuối cùng
       lastReminderTime = new Date();
-      chrome.storage.local.set({ lastReminderTime: lastReminderTime.getTime() });
+      chrome.storage.local.set({
+        lastReminderTime: lastReminderTime.getTime(),
+      });
 
       // Tính thời điểm nhắc nhở tiếp theo
       nextReminderTime = calculateNextReminderTime(currentSettings);
@@ -182,48 +207,51 @@ function startReminder(settings: {
 
   currentSettings = settings;
   const startTimestamp = Date.now();
-  
+
   // Lấy thời điểm nhắc nhở cuối cùng từ storage
-  chrome.storage.local.get(["lastReminderTime", "nextReminderTime"], (result) => {
-    const now = new Date();
-    
-    if (result.lastReminderTime) {
-      lastReminderTime = new Date(result.lastReminderTime);
-    }
-    
-    if (result.nextReminderTime) {
-      nextReminderTime = new Date(result.nextReminderTime);
-      
-      // Nếu thời điểm nhắc nhở tiếp theo đã qua, tính lại
-      if (now >= nextReminderTime) {
+  chrome.storage.local.get(
+    ["lastReminderTime", "nextReminderTime"],
+    (result) => {
+      const now = new Date();
+
+      if (result.lastReminderTime) {
+        lastReminderTime = new Date(result.lastReminderTime);
+      }
+
+      if (result.nextReminderTime) {
+        nextReminderTime = new Date(result.nextReminderTime);
+
+        // Nếu thời điểm nhắc nhở tiếp theo đã qua, tính lại
+        if (now >= nextReminderTime) {
+          nextReminderTime = calculateNextReminderTime(settings);
+        }
+      } else {
+        // Nếu chưa có thời điểm nhắc nhở tiếp theo, tính từ bây giờ
         nextReminderTime = calculateNextReminderTime(settings);
       }
-    } else {
-      // Nếu chưa có thời điểm nhắc nhở tiếp theo, tính từ bây giờ
-      nextReminderTime = calculateNextReminderTime(settings);
+
+      // Lưu thời điểm nhắc nhở tiếp theo và thời điểm bắt đầu
+      chrome.storage.local.set({
+        nextReminderTime: nextReminderTime.getTime(),
+        startTimestamp: startTimestamp,
+      });
+
+      // Reset count for new day if needed
+      resetDailyCount();
+
+      // Kiểm tra ngay lập tức nếu đã đến thời điểm nhắc nhở
+      checkAndShowNotification();
+
+      // Thiết lập interval để kiểm tra định kỳ
+      reminderTimer = setInterval(checkAndShowNotification, 60000); // Kiểm tra mỗi phút
+
+      logEvent(
+        "info",
+        "startReminder",
+        `Water reminder started with ${settings.calculatedSchedule.intervalMinutes} minute interval`
+      );
     }
-    
-    // Lưu thời điểm nhắc nhở tiếp theo và thời điểm bắt đầu
-    chrome.storage.local.set({
-      nextReminderTime: nextReminderTime.getTime(),
-      startTimestamp: startTimestamp,
-    });
-    
-    // Reset count for new day if needed
-    resetDailyCount();
-    
-    // Kiểm tra ngay lập tức nếu đã đến thời điểm nhắc nhở
-    checkAndShowNotification();
-    
-    // Thiết lập interval để kiểm tra định kỳ
-    reminderTimer = setInterval(checkAndShowNotification, 60000); // Kiểm tra mỗi phút
-    
-    logEvent(
-      "info",
-      "startReminder",
-      `Water reminder started with ${settings.calculatedSchedule.intervalMinutes} minute interval`
-    );
-  });
+  );
 }
 
 function stopReminder() {
@@ -234,16 +262,16 @@ function stopReminder() {
   currentSettings = null;
   nextReminderTime = null;
   const stopTimestamp = Date.now();
-  
+
   chrome.storage.local.set({
     isEnabled: false,
     stopTimestamp: stopTimestamp,
   });
-  
+
   logEvent("info", "stopReminder", "Water reminder stopped");
 }
 
-// Listen for messages from popup
+// Listen for messages from popup and web page
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.action === "START_REMINDER") {
     startReminder(message.settings);
@@ -267,6 +295,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       nextReminderTime: nextReminderTime ? nextReminderTime.getTime() : null,
       reminderCount,
     });
+  } else if (message.action === "test") {
+    showNotification();
   }
   return true;
 });
@@ -288,18 +318,22 @@ chrome.runtime.onInstalled.addListener(() => {
     (result) => {
       reminderCount = result.reminderCount || 0;
       lastResetDate = result.lastResetDate || null;
-      
+
       if (result.lastReminderTime) {
         lastReminderTime = new Date(result.lastReminderTime);
       }
-      
+
       if (result.nextReminderTime) {
         nextReminderTime = new Date(result.nextReminderTime);
       }
-      
+
       resetDailyCount();
 
-      if (result.isEnabled && result.userSettings && result.calculatedSchedule) {
+      if (
+        result.isEnabled &&
+        result.userSettings &&
+        result.calculatedSchedule
+      ) {
         startReminder({
           userSettings: result.userSettings,
           calculatedSchedule: result.calculatedSchedule,
@@ -325,15 +359,15 @@ chrome.storage.local.get(
   (result) => {
     reminderCount = result.reminderCount || 0;
     lastResetDate = result.lastResetDate || null;
-    
+
     if (result.lastReminderTime) {
       lastReminderTime = new Date(result.lastReminderTime);
     }
-    
+
     if (result.nextReminderTime) {
       nextReminderTime = new Date(result.nextReminderTime);
     }
-    
+
     resetDailyCount();
 
     if (result.isEnabled && result.userSettings && result.calculatedSchedule) {
